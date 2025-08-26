@@ -1,0 +1,17 @@
+{
+    "mcpServers": {
+        "augmentmem": {
+            "namespace": "augmentmem",
+            "env": {
+                "API_URL": "http://localhost:8010/mcp",
+                "AUGMENT_USER_ID": "9296f953-5309-464b-ad3a-33f025b24b0e"
+            }
+        },
+        "finance": {
+            "namespace": "finance",
+            "env": {
+                "API_URL": "http://localhost:8000/mcp"
+            }
+        }
+    }
+}
