@@ -7,9 +7,10 @@ export interface ChatBubbleProps {
   position?: 'bottom-right' | 'bottom-left';
   apiPath?: string;
   initialModel?: string;
+  enableAttachments?: boolean;
 }
 
-export function ChatBubble({ position = 'bottom-right', apiPath = '/api/chat', initialModel = 'openai:gpt-5' }: ChatBubbleProps) {
+export function ChatBubble({ position = 'bottom-right', apiPath = '/api/chat', initialModel = 'openai:gpt-5', enableAttachments }: ChatBubbleProps) {
   const [open, setOpen] = useState(false);
   const posClass = position === 'bottom-right' ? 'right-6 bottom-6' : 'left-6 bottom-6';
 
@@ -30,7 +31,7 @@ export function ChatBubble({ position = 'bottom-right', apiPath = '/api/chat', i
             className={`absolute ${position === 'bottom-right' ? 'right-6 bottom-24' : 'left-6 bottom-24'} w-[380px] h-[520px] bg-white rounded-lg shadow-2xl overflow-hidden border border-gray-200`}
             onClick={(e) => e.stopPropagation()}
           >
-            <ChatCore apiPath={apiPath} initialModel={initialModel} onRequestClose={() => setOpen(false)} />
+            <ChatCore apiPath={apiPath} initialModel={initialModel} onRequestClose={() => setOpen(false)} enableAttachments={enableAttachments} />
           </div>
         </div>
       )}

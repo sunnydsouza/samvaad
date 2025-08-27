@@ -9,10 +9,14 @@ interface MessageRendererProps {
   message: {
     id: string;
     role: string;
-    content?: string;
+    content?: string | unknown[];
     parts?: Array<{
       type: string;
       text?: string;
+      image?: string;
+      data?: string;
+      mediaType?: string;
+      filename?: string;
       toolInvocation?: { toolName?: string; args?: Record<string, unknown> };
       toolResult?: { toolName?: string; result?: unknown; toolCallId?: string; input?: unknown; output?: unknown };
       [key: string]: unknown;
@@ -67,6 +71,39 @@ export function MessageRenderer({ message }: MessageRendererProps) {
     return null;
   }
 
+  // Normalize parts: prefer explicit parts, else treat content array as parts
+  const normalizedParts = Array.isArray(message.parts)
+    ? message.parts
+    : (Array.isArray(message.content) ? message.content : undefined);
+
+  const renderSimplePart = (part: { type: string; text?: string; image?: string; data?: string; mediaType?: string; filename?: string }, idx: number) => {
+    if (part.type === 'text') {
+      return (
+        <div key={`simple-text-${idx}`} className="whitespace-pre-wrap">
+          {part.text}
+        </div>
+      );
+    }
+    if (part.type === 'image' && part.image) {
+      return (
+        <div key={`simple-image-${idx}`} className="my-2">
+          <img src={part.image} alt={part.filename || 'image'} className="max-w-full rounded" />
+        </div>
+      );
+    }
+    if (part.type === 'file' && part.data) {
+      return (
+        <div key={`simple-file-${idx}`} className="my-2 text-xs text-gray-600">
+          <span className="inline-flex items-center gap-2 bg-gray-100 px-2 py-1 rounded">
+            <span className="font-medium">Attachment</span>
+            <span>{part.filename || part.mediaType}</span>
+          </span>
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div className={`flex space-x-3 max-w-4xl ${isUser ? 'flex-row-reverse space-x-reverse' : ''}`}>
@@ -116,19 +153,15 @@ export function MessageRenderer({ message }: MessageRendererProps) {
               </div>
             )}
 
-            {/* Parts-based rendering */}
-            {message.parts && message.parts.map((part, index) => {
-              if (part.type === 'text') {
-                return (
-                  <div key={`text-${index}`} className="whitespace-pre-wrap">
-                    {part.text}
-                  </div>
-                );
+            {/* Parts-based rendering (normalized to handle message.content arrays) */}
+            {Array.isArray(normalizedParts) && normalizedParts.map((part, index) => {
+              const p = asRecord(part);
+              if (typeof p.type === 'string' && (p.type === 'text' || p.type === 'image' || p.type === 'file')) {
+                return renderSimplePart(p as { type: string; text?: string; image?: string; data?: string; mediaType?: string; filename?: string }, index);
               }
 
-              if (part.type === 'tool-invocation') {
-                const pr = asRecord(part);
-                const ti = asRecord(pr.toolInvocation ?? pr);
+              if (p.type === 'tool-invocation') {
+                const ti = asRecord(p.toolInvocation ?? p);
                 const name = typeof ti.toolName === 'string' ? ti.toolName : (typeof ti.name === 'string' ? String(ti.name) : 'tool');
                 const args = (ti.args && typeof ti.args === 'object') ? (ti.args as Record<string, unknown>) : {};
                 return (
@@ -143,9 +176,8 @@ export function MessageRenderer({ message }: MessageRendererProps) {
                 );
               }
 
-              if (part.type === 'tool-result') {
-                const pr = asRecord(part);
-                const tr = asRecord(pr.toolResult ?? pr);
+              if (p.type === 'tool-result') {
+                const tr = asRecord(p.toolResult ?? p);
                 const name = typeof tr.toolName === 'string' ? tr.toolName : (typeof tr.name === 'string' ? String(tr.name) : 'tool');
                 const result = tr.result ?? tr.output;
                 const input = tr.input; // some providers include input echo
@@ -215,13 +247,12 @@ export function MessageRenderer({ message }: MessageRendererProps) {
                 );
               }
 
-              if (part.type === 'dynamic-tool') {
-                const dt = asRecord(part);
-                const name = typeof dt.toolName === 'string' ? dt.toolName : 'tool';
-                const state = typeof dt.state === 'string' ? dt.state : undefined;
+              if (p.type === 'dynamic-tool') {
+                const name = typeof p.toolName === 'string' ? (p.toolName as string) : 'tool';
+                const state = typeof p.state === 'string' ? (p.state as string) : undefined;
                 // Structured rendering
                 let structuredPayload: unknown = null;
-                const out = dt.output ?? dt.result;
+                const out = (p as { output?: unknown; result?: unknown }).output ?? (p as { output?: unknown; result?: unknown }).result;
                 if (out && typeof out === 'object') {
                   const rr = asRecord(out);
                   if (typeof rr.schema === 'string') structuredPayload = rr;
@@ -238,7 +269,7 @@ export function MessageRenderer({ message }: MessageRendererProps) {
                 // Fallback finance-chart
                 let maybeChart: FinanceChartV1 | null = null;
                 if (!structuredPayload) {
-                  const o = dt.output ?? dt.result;
+                  const o = out;
                   if (o && typeof o === 'object') {
                     const rr = asRecord(o);
                     if (isFinanceChartV1(rr)) maybeChart = rr;
@@ -264,20 +295,20 @@ export function MessageRenderer({ message }: MessageRendererProps) {
                     ) : null}
 
                     <Collapsible title={`${state === 'output-available' ? '✅' : '⚙️'} ${name}`} defaultOpen={false}>
-                      {dt.input !== undefined && (
+                      {(p as { input?: unknown }).input !== undefined && (
                         <div className="mb-1">
                           <strong>Request:</strong>
-                          <pre className="whitespace-pre-wrap mt-1 bg-black/5 p-2 rounded text-xs overflow-x-auto">{JSON.stringify(dt.input, null, 2)}</pre>
+                          <pre className="whitespace-pre-wrap mt-1 bg-black/5 p-2 rounded text-xs overflow-x-auto">{JSON.stringify((p as { input?: unknown }).input, null, 2)}</pre>
                         </div>
                       )}
                       {state === 'output-available' && !structuredNode && !maybeChart && (
                         <div>
                           <strong>Result:</strong>
-                          <pre className="whitespace-pre-wrap mt-1 bg-black/5 p-2 rounded text-xs overflow-x-auto">{JSON.stringify(dt.output ?? dt.result ?? {}, null, 2)}</pre>
+                          <pre className="whitespace-pre-wrap mt-1 bg-black/5 p-2 rounded text-xs overflow-x-auto">{JSON.stringify(out ?? {}, null, 2)}</pre>
                         </div>
                       )}
                       {state === 'output-error' && (
-                        <div className="text-red-600"><strong>Error:</strong> {(typeof dt.errorText === 'string' ? dt.errorText : 'Tool execution failed')}</div>
+                        <div className="text-red-600"><strong>Error:</strong> {(typeof (p as { errorText?: string }).errorText === 'string' ? (p as { errorText?: string }).errorText : 'Tool execution failed')}</div>
                       )}
                     </Collapsible>
                   </div>
@@ -287,15 +318,10 @@ export function MessageRenderer({ message }: MessageRendererProps) {
               return null;
             })}
 
-            {message.content && (
+            {/* Plain string content fallback */}
+            {typeof message.content === 'string' && (
               <div className="whitespace-pre-wrap">
                 {message.content}
-              </div>
-            )}
-
-            {!message.content && message.toolInvocations && message.toolInvocations.length > 0 && (
-              <div className="text-sm opacity-75">
-                Executed {message.toolInvocations.length} tool{message.toolInvocations.length > 1 ? 's' : ''}
               </div>
             )}
           </div>

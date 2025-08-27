@@ -4,8 +4,8 @@ import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { MessageRenderer } from '@/components/message-renderer';
 import { ModelSelector } from '@/components/model-selector';
-import { useEffect, useMemo, useState } from 'react';
-import { Settings as SettingsIcon } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Paperclip, Settings as SettingsIcon, X, AlertCircle } from 'lucide-react';
 
 export interface ChatCoreProps {
   apiPath?: string; // default '/api/chat'
@@ -13,13 +13,45 @@ export interface ChatCoreProps {
   header?: React.ReactNode; // deprecated - no longer used
   footer?: React.ReactNode; // optional extra footer content
   onRequestClose?: () => void;
+  enableAttachments?: boolean | undefined; // feature toggle
+  maxAttachmentMB?: number | undefined; // override default 10MB
 }
 
 type ServerInfo = { name: string; ok: boolean; tools?: number; toolNames?: string[] };
 
-export function ChatCore({ apiPath = '/api/chat', initialModel = 'openai:gpt-5', footer, onRequestClose }: ChatCoreProps) {
+const ENV_ENABLE_ATTACHMENTS = String(process.env.NEXT_PUBLIC_ENABLE_ATTACHMENTS || '').toLowerCase() === 'true';
+
+const ACCEPTED_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'application/pdf',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+];
+
+const ACCEPT_ATTRIBUTE = ACCEPTED_TYPES.join(',');
+
+function isAccepted(file: File): boolean {
+  return ACCEPTED_TYPES.includes(file.type);
+}
+
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+export function ChatCore({ apiPath = '/api/chat', initialModel = 'openai:gpt-5', footer, onRequestClose, enableAttachments, maxAttachmentMB }: ChatCoreProps) {
   const [selectedModel, setSelectedModel] = useState<string>(initialModel);
   const [view, setView] = useState<'chat' | 'settings'>('chat');
+
+  const attachmentsEnabled = (typeof enableAttachments === 'boolean' ? enableAttachments : ENV_ENABLE_ATTACHMENTS);
+  const sizeLimitMB = typeof maxAttachmentMB === 'number' && maxAttachmentMB > 0 ? maxAttachmentMB : 10; // default 10MB
+  const sizeLimitBytes = sizeLimitMB * 1024 * 1024;
 
   const transport = useMemo(() => new DefaultChatTransport({ api: apiPath, body: { model: selectedModel } }), [apiPath, selectedModel]);
 
@@ -30,13 +62,91 @@ export function ChatCore({ apiPath = '/api/chat', initialModel = 'openai:gpt-5',
   });
 
   const [input, setInput] = useState('');
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [rejected, setRejected] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const dropRef = useRef<HTMLDivElement | null>(null);
+
   const isLoading = status === 'streaming' || status === 'submitted';
 
-  const handleSubmit = (e: React.FormEvent) => {
+  function addFiles(files: FileList | File[]) {
+    const incoming = Array.from(files);
+    const accepted: File[] = [];
+    for (const f of incoming) {
+      if (!isAccepted(f)) {
+        setRejected(`Unsupported type: ${f.type || f.name}`);
+        continue;
+      }
+      if (f.size > sizeLimitBytes) {
+        setRejected(`File too large (>${sizeLimitMB}MB): ${f.name}`);
+        continue;
+      }
+      accepted.push(f);
+    }
+    if (accepted.length === 0) return;
+    setAttachedFiles((prev) => [...prev, ...accepted].slice(0, 6));
+  }
+
+  useEffect(() => {
+    if (!attachmentsEnabled) return;
+    const el = dropRef.current;
+    if (!el) return;
+
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+    };
+    const onDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      if (dt.files && dt.files.length > 0) addFiles(dt.files);
+    };
+
+    el.addEventListener('dragover', onDragOver);
+    el.addEventListener('dragleave', onDragLeave);
+    el.addEventListener('drop', onDrop);
+    return () => {
+      el.removeEventListener('dragover', onDragOver);
+      el.removeEventListener('dragleave', onDragLeave);
+      el.removeEventListener('drop', onDrop);
+    };
+  }, [attachmentsEnabled]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
-    sendMessage({ text: input });
+    if (isLoading) return;
+
+    const hasText = !!input.trim();
+    const hasFiles = attachmentsEnabled && attachedFiles.length > 0;
+    if (!hasText && !hasFiles) return;
+
+    const parts: Array<{ type: 'text'; text: string } | { type: 'image'; image: string; mediaType?: string } | { type: 'file'; data: string; mediaType: string; filename?: string }> = [];
+    if (hasText) parts.push({ type: 'text', text: input });
+
+    if (hasFiles) {
+      for (const f of attachedFiles) {
+        const dataUrl = await fileToDataUrl(f);
+        if (f.type.startsWith('image/')) {
+          parts.push({ type: 'image', image: dataUrl, mediaType: f.type });
+        } else {
+          parts.push({ type: 'file', data: dataUrl, mediaType: f.type, filename: f.name });
+        }
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (sendMessage as any)({ content: parts });
+
     setInput('');
+    setRejected(null);
+    setAttachedFiles([]);
   };
 
   const [servers, setServers] = useState<ServerInfo[]>([]);
@@ -175,24 +285,69 @@ export function ChatCore({ apiPath = '/api/chat', initialModel = 'openai:gpt-5',
         )}
       </div>
 
-      <div className="border-t border-gray-200 p-4 space-y-2">
+      <div className="border-t border-gray-200 p-4 space-y-2" ref={dropRef}>
         {view === 'chat' && (
-          <form onSubmit={handleSubmit} className="flex space-x-2">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Type your message..."
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              disabled={isLoading}
-            />
-            <button
-              type="submit"
-              disabled={!input.trim() || isLoading}
-              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              Send
-            </button>
+          <form onSubmit={handleSubmit} className={`flex flex-col gap-2 ${isDragging ? 'ring-2 ring-blue-400 rounded-lg bg-blue-50/50' : ''}`}>
+            {rejected && (
+              <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-xs px-3 py-2 rounded-md">
+                <AlertCircle className="w-4 h-4" />
+                <span>{rejected}</span>
+              </div>
+            )}
+            {attachmentsEnabled && attachedFiles.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {attachedFiles.map((f, i) => (
+                  <span key={`${f.name}-${i}`} className="inline-flex items-center gap-2 text-xs bg-gray-100 border border-gray-200 px-2 py-1 rounded">
+                    <Paperclip className="w-3 h-3 text-gray-500" />
+                    <span className="truncate max-w-[140px]" title={f.name}>{f.name}</span>
+                    <button type="button" className="text-gray-400 hover:text-gray-700" onClick={() => setAttachedFiles(attachedFiles.filter((_, idx) => idx !== i))}>
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {attachmentsEnabled && isDragging && attachedFiles.length === 0 && (
+              <div className="text-xs text-blue-700 bg-blue-100 border border-blue-200 rounded px-2 py-1 w-fit">Drop files to attach</div>
+            )}
+
+            <div className="flex items-center gap-2">
+              {attachmentsEnabled && (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                  disabled={isLoading}
+                  aria-label="Attach files"
+                  title="Attach files"
+                >
+                  <Paperclip className="w-4 h-4" />
+                </button>
+              )}
+              <input ref={fileInputRef} type="file" className="hidden" multiple accept={ACCEPT_ATTRIBUTE} onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                if (files.length === 0) return;
+                addFiles(files);
+                if (e.currentTarget) e.currentTarget.value = '';
+              }} />
+
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={attachmentsEnabled ? 'Type your message, or drag & drop files...' : 'Type your message...'}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                disabled={isLoading}
+              />
+              <button
+                type="submit"
+                disabled={(!input.trim() && attachedFiles.length === 0) || isLoading}
+                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Send
+              </button>
+            </div>
           </form>
         )}
 

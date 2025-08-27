@@ -47,6 +47,13 @@ MCP_CONFIG=public/mcp.config.json
 - `${ENV}` values are interpolated server-side when loading the file.
 - Headers/auth are optional and can be added later.
 
+## Attachments (optional)
+
+- Toggle via env: set `NEXT_PUBLIC_ENABLE_ATTACHMENTS=true` to enable file attachments globally.
+- Or pass a prop: `<ChatCore enableAttachments />`, `<ChatBubble enableAttachments />`, `<ChatSidebar enableAttachments />`.
+- Supported types: images (`png`, `jpg`, `jpeg`), `pdf`, Excel (`.xls`, `.xlsx`). Files are sent inline as base64 data URLs using AI SDK message parts.
+- Drag & drop: when enabled, you can drag supported files into the chat input area to attach them.
+
 ## Embedding options
 
 - Full page: `src/app/examples/full/page.tsx`
@@ -68,6 +75,9 @@ import { ChatCore, ChatBubble, ChatSidebar } from 'samvaad';
 ```bash
 # Path to MCP config
 MCP_CONFIG=public/mcp.config.json
+
+# Enable file attachments in the UI (optional)
+NEXT_PUBLIC_ENABLE_ATTACHMENTS=true
 
 # Model providers
 OPENAI_API_KEY=...

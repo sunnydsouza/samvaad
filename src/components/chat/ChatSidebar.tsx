@@ -8,9 +8,10 @@ export interface ChatSidebarProps {
   width?: number; // px
   apiPath?: string;
   initialModel?: string;
+  enableAttachments?: boolean;
 }
 
-export function ChatSidebar({ side = 'right', width = 380, apiPath = '/api/chat', initialModel = 'openai:gpt-5' }: ChatSidebarProps) {
+export function ChatSidebar({ side = 'right', width = 380, apiPath = '/api/chat', initialModel = 'openai:gpt-5', enableAttachments }: ChatSidebarProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -32,7 +33,7 @@ export function ChatSidebar({ side = 'right', width = 380, apiPath = '/api/chat'
           >
             <div className="h-full flex flex-col">
               <div className="flex-1">
-                <ChatCore apiPath={apiPath} initialModel={initialModel} onRequestClose={() => setOpen(false)} />
+                <ChatCore apiPath={apiPath} initialModel={initialModel} onRequestClose={() => setOpen(false)} enableAttachments={enableAttachments} />
               </div>
             </div>
           </div>
